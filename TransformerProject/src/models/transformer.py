@@ -16,8 +16,10 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
+        # Apply dropout to input embeddings before adding positional encoding
+        x = self.dropout(x)
         x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
+        return x
 
 def scaled_dot_product_attention(query, key, value, mask=None):
     d_k = query.size(-1)
@@ -36,7 +38,7 @@ class MultiHeadAttention(nn.Module):
         self.linears = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(4)])
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, return_attention=False):
         batch_size = query.size(0)
         
         query, key, value = [l(x).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
@@ -46,7 +48,11 @@ class MultiHeadAttention(nn.Module):
         
         x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.d_k)
         x = self.linears[-1](x)
-        return self.dropout(x), attn  # Return both output and attention weights
+        x = self.dropout(x)
+        
+        if return_attention:
+            return x, attn
+        return x
 
 class PositionwiseFeedForward(nn.Module):
     def __init__(self, d_model, d_ff, dropout=0.1):
@@ -69,7 +75,7 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask):
-        attn_output, _ = self.self_attn(x, x, x, mask)  # Ignore attn weights here
+        attn_output = self.self_attn(x, x, x, mask)  # No attention weights returned
         x = self.norm1(x + self.dropout(attn_output))
         ff_output = self.feed_forward(x)
         x = self.norm2(x + self.dropout(ff_output))
@@ -87,9 +93,9 @@ class DecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, enc_output, src_mask, tgt_mask):
-        self_attn_output, _ = self.self_attn(x, x, x, tgt_mask)
+        self_attn_output = self.self_attn(x, x, x, tgt_mask)  # No attention weights returned
         x = self.norm1(x + self.dropout(self_attn_output))
-        cross_attn_output, _ = self.cross_attn(x, enc_output, enc_output, src_mask)
+        cross_attn_output = self.cross_attn(x, enc_output, enc_output, src_mask)  # No attention weights returned
         x = self.norm2(x + self.dropout(cross_attn_output))
         ff_output = self.feed_forward(x)
         x = self.norm3(x + self.dropout(ff_output))
@@ -109,8 +115,12 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, src, tgt, src_mask, tgt_mask):
-        src = self.pos_encoding(self.src_embedding(src) * math.sqrt(self.src_embedding.embedding_dim))
-        tgt = self.pos_encoding(self.tgt_embedding(tgt) * math.sqrt(self.tgt_embedding.embedding_dim))
+        # Apply dropout to embeddings before positional encoding
+        src_emb = self.dropout(self.src_embedding(src) * math.sqrt(self.src_embedding.embedding_dim))
+        tgt_emb = self.dropout(self.tgt_embedding(tgt) * math.sqrt(self.tgt_embedding.embedding_dim))
+        
+        src = self.pos_encoding(src_emb)
+        tgt = self.pos_encoding(tgt_emb)
         
         enc_output = src
         for layer in self.encoder_layers:
@@ -122,3 +132,15 @@ class Transformer(nn.Module):
         
         output = self.final_linear(dec_output)
         return output
+    
+    def get_attention_weights(self, src, src_mask, layer_idx=0):
+        """Get attention weights from a specific encoder layer for visualization"""
+        if layer_idx >= len(self.encoder_layers):
+            raise ValueError(f"Layer index {layer_idx} out of range. Model has {len(self.encoder_layers)} layers.")
+        
+        src_emb = self.dropout(self.src_embedding(src) * math.sqrt(self.src_embedding.embedding_dim))
+        src = self.pos_encoding(src_emb)
+        
+        # Get attention weights from the specified layer
+        _, attn_weights = self.encoder_layers[layer_idx].self_attn(src, src, src, src_mask, return_attention=True)
+        return attn_weights
