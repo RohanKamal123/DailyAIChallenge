@@ -32,8 +32,8 @@ print(f"Output shape: {output.shape}")
 # Generate attention heatmap
 model.eval()
 with torch.no_grad():
-    src_emb = model.pos_encoding(model.src_embedding(src) * math.sqrt(model.src_embedding.embedding_dim))
-    _, attn = model.encoder_layers[0].self_attn(src_emb, src_emb, src_emb, src_mask)
+    # Use the new method to get attention weights
+    attn = model.get_attention_weights(src, src_mask, layer_idx=0)
     sns.heatmap(attn[0, 0].detach().cpu().numpy())
     plt.title("Attention Heatmap (Encoder Self-Attention)")
     plt.savefig("outputs/plots/attention_heatmap.png")
